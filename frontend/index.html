@@ -1,0 +1,2128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Albion Market Helper</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: #0a0a0a;
+            color: #e5e5e5;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        .glass {
+            background: rgba(30, 30, 30, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: all 0.3s;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        .btn-action {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            transition: all 0.3s;
+        }
+        .btn-action:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(245, 87, 108, 0.4);
+        }
+        .caerleon-badge {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        }
+        .category-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .loading { animation: pulse 2s infinite; }
+        
+        /* Scrollbar styles */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(30, 30, 30, 0.5);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(100, 100, 100, 0.5);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(150, 150, 150, 0.5);
+        }
+        .tab-active {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        }
+        .tab-inactive {
+            background: rgba(55, 65, 81, 0.5);
+            color: #9ca3af;
+        }
+        .breeding-card {
+            background: rgba(30, 30, 30, 0.9);
+            border: 1px solid rgba(147, 51, 234, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // ================ CONFIGURACIÓN =================
+        const API_BASE = 'http://localhost:8000';
+
+        // Categorías de items hardcodeadas para el frontend
+        const ITEM_CATEGORIES = {
+            "🗡️ Weapons": "Swords, Axes, Bows, Staves, etc.",
+            "🛡️ Armor": "Cloth, Leather, Plate armor sets",
+            "🎒 Accessories": "Bags, Capes",
+            "🐴 Mounts": "Horses, Oxen, Special mounts",
+            "🥩 Food": "Meals, Soups, Pies, Sandwiches",
+            "⚗️ Potions": "Healing, Energy, Resistance potions",
+            "🪨 Resources": "Wood, Ore, Hide, Fiber, Stone",
+            "🔨 Refined": "Planks, Bars, Leather, Cloth",
+            "🔧 Tools": "Gathering and crafting tools",
+            "⚔️ Offhand": "Shields, Books, Orbs, Torches",
+            "🎣 Fishing": "Fish and fishing items",
+            "📦 Artifacts": "Artifact weapons and armor",
+            "🌾 Farming": "Seeds, Animals, Farm products",
+            "🏠 Furniture": "Trophies, Beds, Tables"
+        };
+
+        // ================ API CLIENT =================
+        const api = {
+            async getMeta() {
+                try {
+                    const res = await fetch(`${API_BASE}/api/meta/cities`);
+                    if (!res.ok) throw new Error('Failed to fetch meta');
+                    return res.json();
+                } catch (error) {
+                    console.error('API Error:', error);
+                    throw error;
+                }
+            },
+            
+            async getPrices(data) {
+                const res = await fetch(`${API_BASE}/api/market/prices`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) throw new Error('Failed to fetch prices');
+                return res.json();
+            },
+            
+            async getOpportunities(data) {
+                const res = await fetch(`${API_BASE}/api/market/opportunities`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) throw new Error('Failed to calculate opportunities');
+                return res.json();
+            },
+            
+            async getHistory(params) {
+                const query = new URLSearchParams(params);
+                const res = await fetch(`${API_BASE}/api/market/history?${query}`);
+                if (!res.ok) throw new Error('Failed to fetch history');
+                return res.json();
+            }
+        };
+
+        // ================ CUSTOM HOOKS =================
+        function useLocalStorage(key, initialValue) {
+            const [storedValue, setStoredValue] = useState(() => {
+                try {
+                    const item = window.localStorage.getItem(key);
+                    return item ? JSON.parse(item) : initialValue;
+                } catch (error) {
+                    console.error(`Error loading ${key} from localStorage:`, error);
+                    return initialValue;
+                }
+            });
+
+            const setValue = value => {
+                try {
+                    setStoredValue(value);
+                    window.localStorage.setItem(key, JSON.stringify(value));
+                } catch (error) {
+                    console.error(`Error saving ${key} to localStorage:`, error);
+                }
+            };
+
+            return [storedValue, setValue];
+        }
+
+        // ================ COMPONENTES =================
+        
+        // TopBar Component
+        function TopBar({ settings, onSettingsChange }) {
+            return (
+                <div className="glass p-4 rounded-lg mb-4">
+                    <div className="flex flex-wrap gap-4 items-center">
+                        <div>
+                            <label className="text-sm text-gray-400">Region</label>
+                            <select 
+                                className="ml-2 bg-gray-800 rounded px-3 py-1 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                                value={settings.region}
+                                onChange={e => onSettingsChange({...settings, region: e.target.value})}
+                            >
+                                <option value="west">West (Americas)</option>
+                                <option value="europe">Europe</option>
+                                <option value="east">East (Asia)</option>
+                            </select>
+                        </div>
+                        
+                        <div className="flex items-center">
+                            <label className="text-sm text-gray-400">Premium</label>
+                            <button
+                                onClick={() => onSettingsChange({...settings, premium: !settings.premium})}
+                                className={`ml-2 px-3 py-1 rounded transition-all ${
+                                    settings.premium 
+                                        ? 'bg-green-600 hover:bg-green-700' 
+                                        : 'bg-gray-600 hover:bg-gray-700'
+                                }`}
+                            >
+                                {settings.premium ? 'ON (4% tax)' : 'OFF (8% tax)'}
+                            </button>
+                        </div>
+
+                        <div>
+                            <label className="text-sm text-gray-400">Setup Fee %</label>
+                            <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="10"
+                                className="ml-2 bg-gray-800 rounded px-2 py-1 w-20 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                                value={(settings.setupFee * 100).toFixed(1)}
+                                onChange={e => onSettingsChange({...settings, setupFee: parseFloat(e.target.value) / 100})}
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-sm text-gray-400">Max Age (hours)</label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="48"
+                                className="ml-2 bg-gray-800 rounded px-2 py-1 w-20 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                                value={settings.maxAge}
+                                onChange={e => onSettingsChange({...settings, maxAge: parseInt(e.target.value)})}
+                            />
+                        </div>
+
+                        <div className="flex items-center">
+                            <label className="text-sm text-gray-400">Caerleon Mode</label>
+                            <button
+                                onClick={() => onSettingsChange({...settings, preferCaerleon: !settings.preferCaerleon})}
+                                className={`ml-2 px-3 py-1 rounded transition-all ${
+                                    settings.preferCaerleon 
+                                        ? 'caerleon-badge text-black font-bold' 
+                                        : 'bg-gray-600 hover:bg-gray-700'
+                                }`}
+                            >
+                                {settings.preferCaerleon ? 'ON' : 'OFF'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Cities Selector Component
+        function CitiesSelector({ cities, selectedCities, onChange }) {
+            const toggleCity = (city) => {
+                if (selectedCities.includes(city)) {
+                    onChange(selectedCities.filter(c => c !== city));
+                } else {
+                    onChange([...selectedCities, city]);
+                }
+            };
+
+            const selectAll = () => onChange([...cities]);
+            const clearAll = () => onChange([]);
+
+            return (
+                <div className="glass p-4 rounded-lg mb-4">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="text-lg font-bold">Select Cities ({selectedCities.length}/{cities.length})</h3>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={selectAll}
+                                className="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                            >
+                                Select All
+                            </button>
+                            <button
+                                onClick={clearAll}
+                                className="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {cities.map(city => (
+                            <button
+                                key={city}
+                                onClick={() => toggleCity(city)}
+                                className={`px-4 py-2 rounded-lg transition-all ${
+                                    selectedCities.includes(city)
+                                        ? city === 'Caerleon' 
+                                            ? 'caerleon-badge text-black font-bold' 
+                                            : 'btn-primary text-white'
+                                        : 'bg-gray-700 hover:bg-gray-600'
+                                }`}
+                            >
+                                {city}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // Items Picker Component with Categories
+        function ItemsPicker({ items, itemsByCategory, selectedItems, onChange }) {
+            const [search, setSearch] = useState('');
+            const [favorites, setFavorites] = useLocalStorage('favoriteItems', []);
+            const [showOnlySelected, setShowOnlySelected] = useState(false);
+            const [selectedCategory, setSelectedCategory] = useState('all');
+            const [tierFilter, setTierFilter] = useState('all');
+
+            // Get items to display based on category selection
+            const getDisplayItems = () => {
+                let displayItems = {};
+                
+                if (selectedCategory === 'all') {
+                    displayItems = items;
+                } else if (selectedCategory === 'favorites') {
+                    favorites.forEach(id => {
+                        if (items[id]) displayItems[id] = items[id];
+                    });
+                } else if (itemsByCategory && itemsByCategory[selectedCategory]) {
+                    displayItems = itemsByCategory[selectedCategory];
+                } else {
+                    // Fallback: filter items by category name
+                    Object.entries(items).forEach(([id, name]) => {
+                        if (matchesCategory(id, name, selectedCategory)) {
+                            displayItems[id] = name;
+                        }
+                    });
+                }
+                
+                // Apply tier filter
+                if (tierFilter !== 'all') {
+                    const filtered = {};
+                    Object.entries(displayItems).forEach(([id, name]) => {
+                        if (id.includes(`T${tierFilter}_`)) {
+                            filtered[id] = name;
+                        }
+                    });
+                    return filtered;
+                }
+                
+                return displayItems;
+            };
+
+            // Helper function to match items to categories
+            const matchesCategory = (id, name, category) => {
+                const lowerName = name.toLowerCase();
+                const lowerId = id.toLowerCase();
+                
+                switch(category) {
+                    case '🗡️ Weapons':
+                        return lowerId.includes('sword') || lowerId.includes('axe') || 
+                               lowerId.includes('mace') || lowerId.includes('bow') || 
+                               lowerId.includes('staff') || lowerId.includes('dagger') ||
+                               lowerId.includes('spear') || lowerId.includes('hammer') ||
+                               lowerId.includes('crossbow') || lowerId.includes('quarterstaff');
+                    case '🛡️ Armor':
+                        return lowerId.includes('head_') || lowerId.includes('armor_') || 
+                               lowerId.includes('shoes_') || lowerId.includes('helmet') ||
+                               lowerId.includes('jacket') || lowerId.includes('robe');
+                    case '🎒 Accessories':
+                        return lowerId.includes('bag') || lowerId.includes('cape');
+                    case '🐴 Mounts':
+                        return lowerId.includes('mount');
+                    case '🥩 Food':
+                        return lowerId.includes('meal') || lowerName.includes('soup') || 
+                               lowerName.includes('pie') || lowerName.includes('omelette');
+                    case '⚗️ Potions':
+                        return lowerId.includes('potion');
+                    case '🪨 Resources':
+                        return (lowerId.includes('wood') || lowerId.includes('ore') || 
+                                lowerId.includes('hide') || lowerId.includes('fiber') || 
+                                lowerId.includes('rock')) && !lowerId.includes('planks') && 
+                                !lowerId.includes('bar') && !lowerId.includes('leather') && 
+                                !lowerId.includes('cloth');
+                    case '🔨 Refined':
+                        return lowerId.includes('planks') || lowerId.includes('metalbar') || 
+                               lowerId.includes('leather') || lowerId.includes('cloth') || 
+                               lowerId.includes('stoneblock');
+                    case '🔧 Tools':
+                        return lowerId.includes('tool_');
+                    case '⚔️ Offhand':
+                        return lowerId.includes('off_');
+                    case '🎣 Fishing':
+                        return lowerId.includes('fish') || lowerId.includes('bait');
+                    case '📦 Artifacts':
+                        return lowerId.includes('_hell') || lowerId.includes('_morgana') || 
+                               lowerId.includes('_undead') || lowerId.includes('_avalon') ||
+                               lowerId.includes('_keeper');
+                    case '🌾 Farming':
+                        return lowerId.includes('seed') || lowerId.includes('farm') || 
+                               lowerId.includes('herb') || lowerId.includes('milk') ||
+                               lowerId.includes('egg');
+                    case '🏠 Furniture':
+                        return lowerId.includes('furniture');
+                    default:
+                        return false;
+                }
+            };
+
+            const displayItems = getDisplayItems();
+            
+            const filteredItems = Object.entries(displayItems).filter(([id, name]) => {
+                const matchesSearch = id.toLowerCase().includes(search.toLowerCase()) ||
+                                     name.toLowerCase().includes(search.toLowerCase());
+                const matchesFilter = !showOnlySelected || selectedItems.includes(id);
+                return matchesSearch && matchesFilter;
+            });
+
+            const toggleItem = (itemId) => {
+                if (selectedItems.includes(itemId)) {
+                    onChange(selectedItems.filter(i => i !== itemId));
+                } else {
+                    onChange([...selectedItems, itemId]);
+                }
+            };
+
+            const toggleFavorite = (itemId, e) => {
+                e.stopPropagation();
+                if (favorites.includes(itemId)) {
+                    setFavorites(favorites.filter(f => f !== itemId));
+                } else {
+                    setFavorites([...favorites, itemId]);
+                }
+            };
+
+            const selectAll = () => {
+                const allCurrentIds = Object.keys(displayItems);
+                const newSelection = [...new Set([...selectedItems, ...allCurrentIds])];
+                onChange(newSelection);
+            };
+            
+            const clearAll = () => {
+                if (selectedCategory === 'all') {
+                    onChange([]);
+                } else {
+                    const currentIds = Object.keys(displayItems);
+                    onChange(selectedItems.filter(id => !currentIds.includes(id)));
+                }
+            };
+
+            return (
+                <div className="glass p-4 rounded-lg mb-4">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="text-lg font-bold">
+                            Select Items ({selectedItems.length} selected)
+                        </h3>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setShowOnlySelected(!showOnlySelected)}
+                                className={`text-sm px-3 py-1 rounded ${
+                                    showOnlySelected ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'
+                                }`}
+                            >
+                                {showOnlySelected ? 'Show All' : 'Show Selected'}
+                            </button>
+                            <button
+                                onClick={selectAll}
+                                className="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                            >
+                                Select Visible
+                            </button>
+                            <button
+                                onClick={clearAll}
+                                className="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                            >
+                                Clear {selectedCategory !== 'all' ? 'Category' : 'All'}
+                            </button>
+                        </div>
+                    </div>
+                    
+                    {/* Filters Row */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                        {/* Category Selector */}
+                        <div>
+                            <label className="text-sm text-gray-400 mb-1 block">Category</label>
+                            <select 
+                                className="w-full bg-gray-800 rounded px-3 py-2 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                                value={selectedCategory}
+                                onChange={e => setSelectedCategory(e.target.value)}
+                            >
+                                <option value="all">📋 All Items</option>
+                                <option value="favorites">⭐ Favorites ({favorites.length})</option>
+                                <optgroup label="Categories">
+                                    {Object.entries(ITEM_CATEGORIES).map(([cat, desc]) => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                </optgroup>
+                            </select>
+                        </div>
+                        
+                        {/* Tier Filter */}
+                        <div>
+                            <label className="text-sm text-gray-400 mb-1 block">Tier</label>
+                            <select 
+                                className="w-full bg-gray-800 rounded px-3 py-2 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                                value={tierFilter}
+                                onChange={e => setTierFilter(e.target.value)}
+                            >
+                                <option value="all">All Tiers</option>
+                                <option value="3">T3 - Journeyman</option>
+                                <option value="4">T4 - Adept</option>
+                                <option value="5">T5 - Expert</option>
+                                <option value="6">T6 - Master</option>
+                                <option value="7">T7 - Grandmaster</option>
+                                <option value="8">T8 - Elder</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    {/* Search Input */}
+                    <input
+                        type="text"
+                        placeholder="Search items..."
+                        className="w-full bg-gray-800 rounded px-3 py-2 mb-3 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                    />
+
+                    {/* Category Info */}
+                    {selectedCategory !== 'all' && selectedCategory !== 'favorites' && (
+                        <div className="mb-3 p-2 bg-gray-800 rounded flex justify-between items-center">
+                            <div>
+                                <span className="text-sm text-gray-400">
+                                    {ITEM_CATEGORIES[selectedCategory] || 'Category items'}
+                                </span>
+                            </div>
+                            <button
+                                onClick={selectAll}
+                                className="text-sm px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded"
+                            >
+                                Select All {Object.keys(displayItems).length} items
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Items Grid */}
+                    <div className="max-h-96 overflow-y-auto border border-gray-800 rounded">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 p-2">
+                            {filteredItems.length === 0 ? (
+                                <div className="col-span-full text-center py-4 text-gray-500">
+                                    No items found matching filters
+                                </div>
+                            ) : (
+                                filteredItems.map(([id, name]) => {
+                                    // Extract tier from ID
+                                    const tierMatch = id.match(/T(\d)_/);
+                                    const tier = tierMatch ? tierMatch[1] : '';
+                                    
+                                    return (
+                                        <div 
+                                            key={id} 
+                                            className={`flex items-center justify-between bg-gray-800 rounded px-2 py-1 hover:bg-gray-700 transition-all cursor-pointer ${
+                                                selectedItems.includes(id) ? 'ring-2 ring-blue-500' : ''
+                                            }`}
+                                            onClick={() => toggleItem(id)}
+                                        >
+                                            <div className="flex-1">
+                                                <div className="text-sm font-medium flex items-center gap-2">
+                                                    {name}
+                                                    {tier && (
+                                                        <span className="text-xs px-1.5 py-0.5 bg-gray-700 rounded">
+                                                            T{tier}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="text-xs text-gray-400">{id}</div>
+                                            </div>
+                                            <button
+                                                onClick={(e) => toggleFavorite(id, e)}
+                                                className={`ml-2 px-2 py-1 text-lg ${
+                                                    favorites.includes(id) ? 'text-yellow-400' : 'text-gray-500 hover:text-gray-300'
+                                                }`}
+                                            >
+                                                ★
+                                            </button>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </div>
+                    
+                    {/* Stats */}
+                    <div className="mt-2 text-xs text-gray-500 flex justify-between">
+                        <span>
+                            {selectedCategory !== 'all' && `Category: ${selectedCategory}`}
+                            {tierFilter !== 'all' && ` | Tier: ${tierFilter}`}
+                        </span>
+                        <span>
+                            Showing {filteredItems.length} of {Object.keys(displayItems).length} items
+                        </span>
+                    </div>
+                </div>
+            );
+        }
+
+        // Results Table Component
+        function ResultsTable({ opportunities, onRowClick }) {
+            const [sortBy, setSortBy] = useState('profit_percentage');
+            const [sortOrder, setSortOrder] = useState('desc');
+            const [page, setPage] = useState(0);
+            const itemsPerPage = 20;
+
+            const sortedData = [...opportunities].sort((a, b) => {
+                const aVal = a[sortBy];
+                const bVal = b[sortBy];
+                if (sortOrder === 'desc') {
+                    return bVal - aVal;
+                } else {
+                    return aVal - bVal;
+                }
+            });
+
+            const paginatedData = sortedData.slice(page * itemsPerPage, (page + 1) * itemsPerPage);
+            const totalPages = Math.ceil(sortedData.length / itemsPerPage);
+
+            const exportToCSV = () => {
+                const headers = ['Item', 'Quality', 'Buy City', 'Sell City', 'Buy Price', 'Sell Price', 'Profit', 'Profit %', 'Data Age (hours)'];
+                const rows = sortedData.map(opp => [
+                    opp.item_name || opp.item_id,
+                    opp.quality,
+                    opp.buy_city,
+                    opp.sell_city,
+                    opp.buy_price,
+                    opp.sell_price,
+                    opp.profit_absolute,
+                    opp.profit_percentage,
+                    opp.data_age_hours.toFixed(1)
+                ]);
+                
+                const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `albion_opportunities_${new Date().toISOString().split('T')[0]}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const handleSort = (field) => {
+                if (sortBy === field) {
+                    setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
+                } else {
+                    setSortBy(field);
+                    setSortOrder('desc');
+                }
+            };
+
+            return (
+                <div className="glass p-4 rounded-lg">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold">
+                            Market Opportunities ({opportunities.length} found)
+                        </h3>
+                        <button
+                            onClick={exportToCSV}
+                            className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded transition-all"
+                        >
+                            📥 Export CSV
+                        </button>
+                    </div>
+
+                    {opportunities.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400">
+                            No opportunities found. Try adjusting your filters or selecting more cities/items.
+                        </div>
+                    ) : (
+                        <>
+                            <div className="overflow-x-auto">
+                                <table className="w-full">
+                                    <thead>
+                                        <tr className="border-b border-gray-700">
+                                            <th className="text-left p-2">Item</th>
+                                            <th className="text-left p-2">Buy City</th>
+                                            <th className="text-left p-2">Sell City</th>
+                                            <th className="text-right p-2">Buy Price</th>
+                                            <th className="text-right p-2">Sell Price</th>
+                                            <th 
+                                                className="text-right p-2 cursor-pointer hover:text-purple-400"
+                                                onClick={() => handleSort('profit_absolute')}
+                                            >
+                                                Profit {sortBy === 'profit_absolute' && (sortOrder === 'desc' ? '↓' : '↑')}
+                                            </th>
+                                            <th 
+                                                className="text-right p-2 cursor-pointer hover:text-purple-400"
+                                                onClick={() => handleSort('profit_percentage')}
+                                            >
+                                                Profit % {sortBy === 'profit_percentage' && (sortOrder === 'desc' ? '↓' : '↑')}
+                                            </th>
+                                            <th className="text-center p-2">Age</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {paginatedData.map((opp, idx) => (
+                                            <tr 
+                                                key={idx}
+                                                className="border-b border-gray-800 hover:bg-gray-800 cursor-pointer transition-all"
+                                                onClick={() => onRowClick(opp)}
+                                            >
+                                                <td className="p-2">
+                                                    <div>
+                                                        <div className="font-medium">{opp.item_name || opp.item_id}</div>
+                                                        <div className="text-xs text-gray-400">Q{opp.quality}</div>
+                                                    </div>
+                                                </td>
+                                                <td className="p-2">{opp.buy_city}</td>
+                                                <td className="p-2">
+                                                    {opp.sell_city}
+                                                    {opp.is_caerleon_route && (
+                                                        <span className="ml-2 text-xs px-2 py-1 rounded caerleon-badge text-black">⭐</span>
+                                                    )}
+                                                </td>
+                                                <td className="text-right p-2">{opp.buy_price.toLocaleString()}</td>
+                                                <td className="text-right p-2">{opp.sell_price.toLocaleString()}</td>
+                                                <td className="text-right p-2 font-bold text-green-400">
+                                                    {opp.profit_absolute.toLocaleString()}
+                                                </td>
+                                                <td className="text-right p-2 font-bold text-green-400">
+                                                    {opp.profit_percentage.toFixed(1)}%
+                                                </td>
+                                                <td className="text-center p-2 text-xs text-gray-400">
+                                                    {opp.data_age_hours.toFixed(1)}h
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {totalPages > 1 && (
+                                <div className="flex justify-center gap-2 mt-4">
+                                    <button
+                                        onClick={() => setPage(Math.max(0, page - 1))}
+                                        disabled={page === 0}
+                                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        Previous
+                                    </button>
+                                    <span className="px-3 py-1">
+                                        Page {page + 1} of {totalPages}
+                                    </span>
+                                    <button
+                                        onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+                                        disabled={page === totalPages - 1}
+                                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            );
+        }
+
+        // Details Drawer Component
+        function DetailsDrawer({ opportunity, onClose }) {
+            const [historyData, setHistoryData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [notes, setNotes] = useLocalStorage(`notes_${opportunity.item_id}_${opportunity.quality}`, '');
+
+            useEffect(() => {
+                const loadHistory = async () => {
+                    setLoading(true);
+                    try {
+                        const [buyHistory, sellHistory] = await Promise.all([
+                            api.getHistory({
+                                region: 'west',
+                                item: opportunity.item_id,
+                                city: opportunity.buy_city,
+                                timescale: 24
+                            }),
+                            api.getHistory({
+                                region: 'west',
+                                item: opportunity.item_id,
+                                city: opportunity.sell_city,
+                                timescale: 24
+                            })
+                        ]);
+                        setHistoryData({ buy: buyHistory.data, sell: sellHistory.data });
+                    } catch (error) {
+                        console.error('Failed to load history:', error);
+                        setHistoryData(null);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                loadHistory();
+            }, [opportunity]);
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="glass rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between items-start mb-4">
+                            <div>
+                                <h2 className="text-2xl font-bold">{opportunity.item_name || opportunity.item_id}</h2>
+                                <p className="text-gray-400">Quality {opportunity.quality}</p>
+                            </div>
+                            <button
+                                onClick={onClose}
+                                className="text-gray-400 hover:text-white text-2xl leading-none p-2"
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div className="bg-gray-800 rounded p-4">
+                                <h3 className="text-sm text-gray-400 mb-1">Buy in {opportunity.buy_city}</h3>
+                                <p className="text-2xl font-bold text-blue-400">{opportunity.buy_price.toLocaleString()}</p>
+                                <p className="text-xs text-gray-500 mt-1">{opportunity.buy_timestamp}</p>
+                            </div>
+                            <div className="bg-gray-800 rounded p-4">
+                                <h3 className="text-sm text-gray-400 mb-1">Sell in {opportunity.sell_city}</h3>
+                                <p className="text-2xl font-bold text-green-400">{opportunity.sell_price.toLocaleString()}</p>
+                                <p className="text-xs text-gray-500 mt-1">{opportunity.sell_timestamp}</p>
+                            </div>
+                        </div>
+
+                        <div className="bg-gray-800 rounded p-4 mb-6">
+                            <h3 className="font-bold mb-3">📊 Profit Breakdown</h3>
+                            <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">Buy Price:</span>
+                                    <span>{opportunity.buy_price.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">+ Setup Fee ({(opportunity.setup_fee_percentage * 100).toFixed(1)}%):</span>
+                                    <span>{(opportunity.buy_price * opportunity.setup_fee_percentage).toFixed(0)}</span>
+                                </div>
+                                <div className="flex justify-between font-medium border-t border-gray-700 pt-2">
+                                    <span>Total Buy Cost:</span>
+                                    <span>{(opportunity.buy_price * (1 + opportunity.setup_fee_percentage)).toFixed(0)}</span>
+                                </div>
+                                
+                                <div className="mt-4 flex justify-between">
+                                    <span className="text-gray-400">Sell Price:</span>
+                                    <span>{opportunity.sell_price.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">- Transaction Tax & Fees ({(opportunity.fees_percentage * 100).toFixed(1)}%):</span>
+                                    <span className="text-red-400">-{(opportunity.sell_price * opportunity.fees_percentage).toFixed(0)}</span>
+                                </div>
+                                <div className="flex justify-between font-medium border-t border-gray-700 pt-2">
+                                    <span>Net Sell Revenue:</span>
+                                    <span>{(opportunity.sell_price * (1 - opportunity.fees_percentage)).toFixed(0)}</span>
+                                </div>
+                                
+                                {opportunity.transport_cost > 0 && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-400">- Transport Cost:</span>
+                                        <span className="text-red-400">-{opportunity.transport_cost}</span>
+                                    </div>
+                                )}
+                                
+                                <div className="flex justify-between font-bold text-green-400 pt-4 border-t-2 border-green-700 text-lg">
+                                    <span>Net Profit:</span>
+                                    <span>{opportunity.profit_absolute.toLocaleString()} ({opportunity.profit_percentage.toFixed(1)}%)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mb-6">
+                            <h3 className="font-bold mb-2">📝 Notes</h3>
+                            <textarea
+                                className="w-full bg-gray-800 rounded p-3 h-24 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                                placeholder="Add your notes here..."
+                                value={notes}
+                                onChange={(e) => setNotes(e.target.value)}
+                            />
+                        </div>
+
+                        {loading && (
+                            <div className="loading text-center py-4">Loading price history...</div>
+                        )}
+                        
+                        {!loading && historyData && (
+                            <div className="bg-gray-800 rounded p-4">
+                                <h3 className="font-bold mb-2">📈 Price History (Last 7 Days)</h3>
+                                <div className="text-sm text-gray-400">
+                                    <p>Buy City ({opportunity.buy_city}): {historyData.buy?.length || 0} data points</p>
+                                    <p>Sell City ({opportunity.sell_city}): {historyData.sell?.length || 0} data points</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+    // Breeding Settings Component
+    function BreedingSettings({ settings, onSettingsChange }) {
+        return (
+            <div className="glass p-4 rounded-lg mb-4">
+                <h3 className="text-lg font-bold mb-3">Breeding Settings</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label className="text-sm text-gray-400">Region</label>
+                        <select 
+                            className="w-full mt-1 bg-gray-800 rounded px-3 py-2 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                            value={settings.region}
+                            onChange={e => onSettingsChange({...settings, region: e.target.value})}
+                        >
+                            <option value="west">West (Americas)</option>
+                            <option value="europe">Europe</option>
+                            <option value="east">East (Asia)</option>
+                        </select>
+                    </div>
+                    
+                    <div>
+                        <label className="text-sm text-gray-400">Feed Mode</label>
+                        <select 
+                            className="w-full mt-1 bg-gray-800 rounded px-3 py-2 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                            value={settings.feedMode}
+                            onChange={e => onSettingsChange({...settings, feedMode: e.target.value})}
+                        >
+                            <option value="buy">Buy Food</option>
+                            <option value="farm">Farm Food</option>
+                        </select>
+                    </div>
+                    
+                    <div>
+                        <label className="text-sm text-gray-400">Food Item</label>
+                        <select 
+                            className="w-full mt-1 bg-gray-800 rounded px-3 py-2 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                            value={settings.feedItem}
+                            onChange={e => onSettingsChange({...settings, feedItem: e.target.value})}
+                        >
+                            <option value="T1_CARROT">Carrot (T1)</option>
+                            <option value="T2_BEAN">Bean (T2)</option>
+                            <option value="T3_WHEAT">Wheat (T3)</option>
+                            <option value="T4_TURNIP">Turnip (T4)</option>
+                            <option value="T5_CABBAGE">Cabbage (T5)</option>
+                            <option value="T6_POTATO">Potato (T6)</option>
+                            <option value="T7_CORN">Corn (T7)</option>
+                        </select>
+                    </div>
+                    
+                    <div className="flex items-center">
+                        <label className="text-sm text-gray-400 mr-2">Premium</label>
+                        <button
+                            className={`px-3 py-1 rounded ${
+                                settings.premium ? 'bg-green-600' : 'bg-gray-600'
+                            }`}
+                            disabled
+                        >
+                            ON (Always)
+                        </button>
+                    </div>
+                    
+                    <div>
+                        <label className="text-sm text-gray-400">Setup Fee %</label>
+                        <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="10"
+                            className="w-full mt-1 bg-gray-800 rounded px-3 py-2 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                            value={(settings.setupFee * 100).toFixed(1)}
+                            onChange={e => onSettingsChange({...settings, setupFee: parseFloat(e.target.value) / 100})}
+                        />
+                    </div>
+                    
+                    <div>
+                        <label className="text-sm text-gray-400">Max Age (hours)</label>
+                        <input
+                            type="number"
+                            min="1"
+                            max="48"
+                            className="w-full mt-1 bg-gray-800 rounded px-3 py-2 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                            value={settings.maxAge}
+                            onChange={e => onSettingsChange({...settings, maxAge: parseInt(e.target.value)})}
+                        />
+                    </div>
+                    
+                    <div className="flex items-center">
+                        <input
+                            type="checkbox"
+                            id="focusBreeding"
+                            checked={settings.useFocusBreeding}
+                            onChange={e => onSettingsChange({...settings, useFocusBreeding: e.target.checked})}
+                            className="mr-2"
+                        />
+                        <label htmlFor="focusBreeding" className="text-sm text-gray-400">
+                            Use Focus (Breeding)
+                        </label>
+                    </div>
+                    
+                    <div className="flex items-center">
+                        <input
+                            type="checkbox"
+                            id="focusSaddler"
+                            checked={settings.useFocusSaddler}
+                            onChange={e => onSettingsChange({...settings, useFocusSaddler: e.target.checked})}
+                            className="mr-2"
+                        />
+                        <label htmlFor="focusSaddler" className="text-sm text-gray-400">
+                            Use Focus (Saddler)
+                        </label>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+    
+    // Island Layout Component
+    function IslandLayout({ layout, onChange }) {
+        const cities = ["Martlock", "Thetford", "Fort Sterling", "Lymhurst", "Bridgewatch", "Caerleon"];
+        
+        return (
+            <div className="glass p-4 rounded-lg mb-4">
+                <h3 className="text-lg font-bold mb-3">Island Pastures</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {cities.map(city => (
+                        <div key={city}>
+                            <label className="text-sm text-gray-400">{city}</label>
+                            <input
+                                type="number"
+                                min="0"
+                                max="20"
+                                className="w-full mt-1 bg-gray-800 rounded px-3 py-2 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                                value={layout[city] || 0}
+                                onChange={e => onChange({...layout, [city]: parseInt(e.target.value) || 0})}
+                            />
+                        </div>
+                    ))}
+                </div>
+                <div className="mt-2 text-sm text-gray-500">
+                    Total pastures: {Object.values(layout).reduce((a, b) => a + b, 0)} 
+                    (Capacity: {Object.values(layout).reduce((a, b) => a + b, 0) * 9} animals)
+                </div>
+            </div>
+        );
+    }
+    
+    // Breeding Plan Component
+    function BreedingPlan({ plan, onChange }) {
+        const addItem = () => {
+            onChange([...plan, { type: "OX", tier: 7, quantity: 1 }]);
+        };
+        
+        const updateItem = (index, field, value) => {
+            const updated = [...plan];
+            updated[index] = { ...updated[index], [field]: value };
+            onChange(updated);
+        };
+        
+        const removeItem = (index) => {
+            onChange(plan.filter((_, i) => i !== index));
+        };
+        
+        return (
+            <div className="glass p-4 rounded-lg mb-4">
+                <div className="flex justify-between items-center mb-3">
+                    <h3 className="text-lg font-bold">Breeding Plan</h3>
+                    <button
+                        onClick={addItem}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded"
+                    >
+                        + Add Mount
+                    </button>
+                </div>
+                
+                {plan.length === 0 ? (
+                    <div className="text-center py-4 text-gray-500">
+                        No mounts planned. Add some to calculate profit!
+                    </div>
+                ) : (
+                    <div className="space-y-2">
+                        {plan.map((item, index) => (
+                            <div key={index} className="flex gap-2 items-center bg-gray-800 p-2 rounded">
+                                <select
+                                    className="bg-gray-700 rounded px-2 py-1"
+                                    value={item.type}
+                                    onChange={e => updateItem(index, 'type', e.target.value)}
+                                >
+                                    <option value="OX">Ox</option>
+                                    <option value="HORSE">Horse</option>
+                                </select>
+                                
+                                <select
+                                    className="bg-gray-700 rounded px-2 py-1"
+                                    value={item.tier}
+                                    onChange={e => updateItem(index, 'tier', parseInt(e.target.value))}
+                                >
+                                    <option value="4">T4 - Adept's</option>
+                                    <option value="5">T5 - Expert's</option>
+                                    <option value="6">T6 - Master's</option>
+                                    <option value="7">T7 - Grandmaster's</option>
+                                    <option value="8">T8 - Elder's</option>
+                                </select>
+                                
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="100"
+                                    className="bg-gray-700 rounded px-2 py-1 w-20"
+                                    value={item.quantity}
+                                    onChange={e => updateItem(index, 'quantity', parseInt(e.target.value) || 1)}
+                                />
+                                
+                                <span className="text-sm text-gray-400">units</span>
+                                
+                                <button
+                                    onClick={() => removeItem(index)}
+                                    className="ml-auto px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-sm"
+                                >
+                                    Remove
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    }
+    
+    // Saddler Fees Component
+    function SaddlerFees({ fees, cities, onChange }) {
+        return (
+            <div className="glass p-4 rounded-lg mb-4">
+                <h3 className="text-lg font-bold mb-3">Saddler Fees (% of materials)</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {cities.map(city => (
+                        <div key={city}>
+                            <label className="text-sm text-gray-400">{city}</label>
+                            <input
+                                type="number"
+                                min="0"
+                                max="20"
+                                step="0.5"
+                                className="w-full mt-1 bg-gray-800 rounded px-3 py-2 text-white border border-gray-700 focus:border-purple-500 focus:outline-none"
+                                value={(fees[city] || 0) * 100}
+                                onChange={e => onChange({...fees, [city]: parseFloat(e.target.value) / 100 || 0})}
+                                placeholder="0"
+                            />
+                        </div>
+                    ))}
+                </div>
+                <div className="mt-2 text-sm text-gray-500">
+                    Enter the usage fee percentage for each city's Saddler
+                </div>
+            </div>
+        );
+    }
+    
+    // Breeding Results Table
+    function BreedingResults({ results, onRowClick }) {
+        const exportToCSV = () => {
+            const headers = ['Mount', 'Quantity', 'Buy Materials', 'Saddler', 'Sell City', 'Cost', 'Revenue', 'Profit', 'Profit %', 'Route'];
+            const rows = results.map(r => [
+                r.mount_name,
+                r.quantity,
+                r.materials_city,
+                r.saddler_city,
+                r.sell_city,
+                r.cost_total.toFixed(0),
+                r.revenue_net.toFixed(0),
+                r.profit_absolute.toFixed(0),
+                r.profit_percentage.toFixed(1),
+                r.route
+            ]);
+            
+            const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `albion_breeding_${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+        
+        return (
+            <div className="glass p-4 rounded-lg">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold">Breeding Results</h3>
+                    <button
+                        onClick={exportToCSV}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded"
+                    >
+                        📥 Export CSV
+                    </button>
+                </div>
+                
+                {results.length === 0 ? (
+                    <div className="text-center py-8 text-gray-400">
+                        No results yet. Configure your breeding plan and click Calculate!
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead>
+                                <tr className="border-b border-gray-700">
+                                    <th className="text-left p-2">Mount</th>
+                                    <th className="text-center p-2">Qty</th>
+                                    <th className="text-left p-2">Materials</th>
+                                    <th className="text-left p-2">Saddler</th>
+                                    <th className="text-left p-2">Sell</th>
+                                    <th className="text-right p-2">Cost</th>
+                                    <th className="text-right p-2">Revenue</th>
+                                    <th className="text-right p-2">Profit</th>
+                                    <th className="text-right p-2">%</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {results.map((result, idx) => (
+                                    <tr 
+                                        key={idx}
+                                        className="border-b border-gray-800 hover:bg-gray-800 cursor-pointer"
+                                        onClick={() => onRowClick(result)}
+                                    >
+                                        <td className="p-2">
+                                            <div>
+                                                <div className="font-medium">{result.mount_name}</div>
+                                                <div className="text-xs text-gray-400">T{result.tier} {result.type}</div>
+                                            </div>
+                                        </td>
+                                        <td className="text-center p-2">{result.quantity}</td>
+                                        <td className="p-2 text-sm">{result.materials_city}</td>
+                                        <td className="p-2 text-sm">{result.saddler_city}</td>
+                                        <td className="p-2 text-sm">{result.sell_city}</td>
+                                        <td className="text-right p-2">{result.cost_total.toLocaleString()}</td>
+                                        <td className="text-right p-2">{result.revenue_net.toLocaleString()}</td>
+                                        <td className="text-right p-2 font-bold text-green-400">
+                                            {result.profit_absolute.toLocaleString()}
+                                        </td>
+                                        <td className="text-right p-2 font-bold text-green-400">
+                                            {result.profit_percentage.toFixed(1)}%
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        
+                        <div className="mt-4 p-3 bg-gray-800 rounded">
+                            <div className="text-sm text-gray-400">
+                                <strong>Total Profit:</strong> {' '}
+                                <span className="text-green-400 font-bold">
+                                    {results.reduce((sum, r) => sum + r.total_profit, 0).toLocaleString()} silver
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    }
+    
+    // Breeding Details Drawer
+    function BreedingDetailsDrawer({ result, onClose }) {
+        if (!result) return null;
+        
+        return (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="glass rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                    <div className="flex justify-between items-start mb-4">
+                        <div>
+                            <h2 className="text-2xl font-bold">{result.mount_name}</h2>
+                            <p className="text-gray-400">Tier {result.tier} • Quantity: {result.quantity}</p>
+                        </div>
+                        <button
+                            onClick={onClose}
+                            className="text-gray-400 hover:text-white text-2xl"
+                        >
+                            ×
+                        </button>
+                    </div>
+                    
+                    <div className="mb-6 p-4 bg-purple-900 bg-opacity-30 rounded border border-purple-500">
+                        <h3 className="font-bold text-purple-300 mb-2">📍 Optimal Route</h3>
+                        <p className="text-lg">{result.route}</p>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div className="breeding-card rounded p-4">
+                            <h3 className="font-bold mb-3">🐄 Animal Costs</h3>
+                            <div className="space-y-1 text-sm">
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">Food Required:</span>
+                                    <span>{result.total_food} units</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">Food Cost:</span>
+                                    <span>{result.animal_cost.food_cost_per_unit.toFixed(0)} per unit</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">Food City:</span>
+                                    <span>{result.animal_cost.food_city}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">Grow Time:</span>
+                                    <span>{result.grow_hours} hours</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">Offspring Chance:</span>
+                                    <span>{(result.offspring_chance * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="flex justify-between font-bold pt-2 border-t border-gray-700">
+                                    <span>Total Animal Cost:</span>
+                                    <span>{result.animal_cost.total_cost.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div className="breeding-card rounded p-4">
+                            <h3 className="font-bold mb-3">🔨 Materials & Crafting</h3>
+                            <div className="space-y-1 text-sm">
+                                {result.materials_breakdown.map((mat, idx) => (
+                                    <div key={idx} className="flex justify-between">
+                                        <span className="text-gray-400">
+                                            {mat.item_id} x{mat.quantity}:
+                                        </span>
+                                        <span>{mat.total.toLocaleString()}</span>
+                                    </div>
+                                ))}
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">Materials City:</span>
+                                    <span>{result.materials_city}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-400">Saddler Fee:</span>
+                                    <span>{result.saddler_fee.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between font-bold pt-2 border-t border-gray-700">
+                                    <span>Total Materials:</span>
+                                    <span>{result.materials_cost.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="breeding-card rounded p-4 mb-6">
+                        <h3 className="font-bold mb-3">💰 Profit Analysis</h3>
+                        <div className="space-y-2">
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">Sell Price:</span>
+                                <span>{result.sell_price.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">Revenue (after tax/fees):</span>
+                                <span>{result.revenue_net.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">Total Cost:</span>
+                                <span className="text-red-400">-{result.cost_total.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between font-bold text-lg pt-2 border-t border-gray-700">
+                                <span>Profit per Unit:</span>
+                                <span className="text-green-400">
+                                    {result.profit_absolute.toLocaleString()} ({result.profit_percentage.toFixed(1)}%)
+                                </span>
+                            </div>
+                            <div className="flex justify-between font-bold text-xl pt-2 border-t-2 border-green-700">
+                                <span>Total Profit ({result.quantity} units):</span>
+                                <span className="text-green-400">
+                                    {result.total_profit.toLocaleString()}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {result.data_age_hours > 6 && (
+                        <div className="p-3 bg-yellow-900 bg-opacity-30 rounded border border-yellow-600">
+                            <p className="text-yellow-400 text-sm">
+                                ⚠️ Data is {result.data_age_hours.toFixed(1)} hours old. Prices may have changed.
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+    
+    // Main Breeding Tab Component
+    function BreedingTab() {
+        const [settings, setSettings] = useLocalStorage('breedingSettings', {
+            region: 'west',
+            premium: true,
+            setupFee: 0.025,
+            txTax: 0.04,
+            maxAge: 12,
+            feedMode: 'buy',
+            feedItem: 'T6_POTATO',
+            useFocusBreeding: false,
+            useFocusSaddler: false,
+            transportCost: 0
+        });
+        
+        const [selectedCities, setSelectedCities] = useLocalStorage('breedingCities', 
+            ['Martlock', 'Thetford', 'Fort Sterling', 'Caerleon']
+        );
+        
+        const [islandLayout, setIslandLayout] = useLocalStorage('islandLayout', {
+            'Martlock': 16,
+            'Thetford': 6,
+            'Fort Sterling': 4
+        });
+        
+        const [breedingPlan, setBreedingPlan] = useLocalStorage('breedingPlan', [
+            { type: 'OX', tier: 7, quantity: 9 },
+            { type: 'HORSE', tier: 4, quantity: 5 }
+        ]);
+        
+        const [saddlerFees, setSaddlerFees] = useLocalStorage('saddlerFees', {
+            'Martlock': 0.07,
+            'Thetford': 0.10,
+            'Fort Sterling': 0.08,
+            'Caerleon': 0.05
+        });
+        
+        const [results, setResults] = useState([]);
+        const [loading, setLoading] = useState(false);
+        const [error, setError] = useState(null);
+        const [selectedResult, setSelectedResult] = useState(null);
+        
+        const handleCalculate = async () => {
+            if (breedingPlan.length === 0) {
+                alert('Please add at least one mount to your breeding plan');
+                return;
+            }
+            
+            if (selectedCities.length === 0) {
+                alert('Please select at least one city');
+                return;
+            }
+            
+            setLoading(true);
+            setError(null);
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/breeding/calc`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        region: settings.region,
+                        cities: selectedCities,
+                        max_age_hours: settings.maxAge,
+                        premium: settings.premium,
+                        setup_fee: settings.setupFee,
+                        tx_tax: settings.txTax,
+                        transport_cost: settings.transportCost,
+                        saddler_fees: saddlerFees,
+                        use_focus_breeding: settings.useFocusBreeding,
+                        use_focus_saddler: settings.useFocusSaddler,
+                        feed_mode: settings.feedMode,
+                        feed_item: settings.feedItem,
+                        island_layout: islandLayout,
+                        plan: breedingPlan
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to calculate breeding profit');
+                }
+                
+                const data = await response.json();
+                setResults(data.results || []);
+                
+                if (!data.results || data.results.length === 0) {
+                    alert('No profitable breeding opportunities found. Try adjusting your settings.');
+                }
+            } catch (err) {
+                setError('Failed to calculate: ' + err.message);
+            } finally {
+                setLoading(false);
+            }
+        };
+        
+        return (
+            <div>
+                {/* Settings */}
+                <BreedingSettings 
+                    settings={settings} 
+                    onSettingsChange={setSettings} 
+                />
+                
+                {/* Cities Selection */}
+                <CitiesSelector
+                    cities={["Martlock", "Thetford", "Fort Sterling", "Lymhurst", "Bridgewatch", "Caerleon"]}
+                    selectedCities={selectedCities}
+                    onChange={setSelectedCities}
+                />
+                
+                {/* Island Layout */}
+                <IslandLayout 
+                    layout={islandLayout} 
+                    onChange={setIslandLayout} 
+                />
+                
+                {/* Saddler Fees */}
+                <SaddlerFees 
+                    fees={saddlerFees} 
+                    cities={selectedCities}
+                    onChange={setSaddlerFees} 
+                />
+                
+                {/* Breeding Plan */}
+                <BreedingPlan 
+                    plan={breedingPlan} 
+                    onChange={setBreedingPlan} 
+                />
+                
+                {/* Action Buttons */}
+                <div className="glass p-4 rounded-lg mb-4">
+                    <div className="flex gap-4">
+                        <button
+                            onClick={handleCalculate}
+                            disabled={loading}
+                            className="px-6 py-3 btn-action rounded-lg text-white font-bold disabled:opacity-50"
+                        >
+                            🐄 CALCULATE BREEDING
+                        </button>
+                        <button
+                            onClick={() => setResults([])}
+                            className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-white font-bold"
+                        >
+                            🗑️ CLEAR
+                        </button>
+                    </div>
+                </div>
+                
+                {/* Error Display */}
+                {error && (
+                    <div className="bg-red-900 bg-opacity-50 border border-red-500 text-red-200 p-4 rounded-lg mb-4">
+                        <strong>Error:</strong> {error}
+                    </div>
+                )}
+                
+                {/* Loading State */}
+                {loading && (
+                    <div className="text-center py-8">
+                        <div className="loading text-2xl">
+                            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                            <div className="mt-2">Calculating breeding profitability...</div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Results */}
+                {!loading && results.length > 0 && (
+                    <BreedingResults 
+                        results={results} 
+                        onRowClick={setSelectedResult}
+                    />
+                )}
+                
+                {/* Details Modal */}
+                {selectedResult && (
+                    <BreedingDetailsDrawer 
+                        result={selectedResult} 
+                        onClose={() => setSelectedResult(null)}
+                    />
+                )}
+            </div>
+        );
+    }
+    // Add these components and updates to your index.html
+
+// ================ DATA STATUS COMPONENT =================
+    function DataStatusPanel() {
+        const [stats, setStats] = useState(null);
+        const [loading, setLoading] = useState(false);
+        
+        const loadStats = async () => {
+            setLoading(true);
+            try {
+                const res = await fetch(`${API_BASE}/api/private/stats`);
+                const data = await res.json();
+                setStats(data);
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+        
+        useEffect(() => {
+            loadStats();
+            const interval = setInterval(loadStats, 30000); // Refresh every 30s
+            return () => clearInterval(interval);
+        }, []);
+        
+        if (!stats) return null;
+        
+        return (
+            <div className="glass p-4 rounded-lg mb-4">
+                <div className="flex justify-between items-center mb-3">
+                    <h3 className="text-lg font-bold">📊 Data Status</h3>
+                    <button 
+                        onClick={loadStats}
+                        disabled={loading}
+                        className="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                    >
+                        🔄 Refresh
+                    </button>
+                </div>
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-800 p-3 rounded">
+                        <div className="text-xs text-gray-400">Private Data</div>
+                        <div className="text-xl font-bold text-green-400">
+                            {stats.source_counts.PRIVATE || 0}
+                        </div>
+                    </div>
+                    <div className="bg-gray-800 p-3 rounded">
+                        <div className="text-xs text-gray-400">AODP Data</div>
+                        <div className="text-xl font-bold text-blue-400">
+                            {stats.source_counts.AODP || 0}
+                        </div>
+                    </div>
+                    <div className="bg-gray-800 p-3 rounded">
+                        <div className="text-xs text-gray-400">Fresh Coverage</div>
+                        <div className="text-xl font-bold text-yellow-400">
+                            {stats.fresh_data_coverage.percentage}%
+                        </div>
+                    </div>
+                    <div className="bg-gray-800 p-3 rounded">
+                        <div className="text-xs text-gray-400">Last Ingest</div>
+                        <div className="text-sm font-bold">
+                            {stats.latest_ingests[0]?.last_ingest_at 
+                                ? new Date(stats.latest_ingests[0].last_ingest_at).toLocaleTimeString()
+                                : 'Never'}
+                        </div>
+                    </div>
+                </div>
+                
+                {stats.stale_items.length > 0 && (
+                    <details className="mt-3">
+                        <summary className="text-sm text-gray-400 cursor-pointer hover:text-gray-300">
+                            ⚠️ Stale Items (need market check)
+                        </summary>
+                        <div className="mt-2 max-h-32 overflow-y-auto">
+                            {stats.stale_items.slice(0, 10).map((item, idx) => (
+                                <div key={idx} className="text-xs py-1 border-b border-gray-800">
+                                    <span className="text-yellow-400">{item.item_id}</span> in {item.city} 
+                                    <span className="text-gray-500 ml-2">({item.age_hours.toFixed(1)}h old)</span>
+                                </div>
+                            ))}
+                        </div>
+                    </details>
+                )}
+            </div>
+        );
+    }
+
+    // ================ UPDATED RESULTS TABLE WITH FILTERS =================
+    function EnhancedResultsTable({ opportunities, onRowClick }) {
+        const [sortBy, setSortBy] = useState('profit_percentage');
+        const [sortOrder, setSortOrder] = useState('desc');
+        const [page, setPage] = useState(0);
+        const [showOnlyProfitable, setShowOnlyProfitable] = useState(false);
+        const [minProfit, setMinProfit] = useState('');
+        const [minProfitPct, setMinProfitPct] = useState('');
+        const itemsPerPage = 20;
+        
+        // Apply filters
+        const filteredData = opportunities.filter(opp => {
+            if (showOnlyProfitable && opp.profit_absolute <= 0) return false;
+            if (minProfit && opp.profit_absolute < parseFloat(minProfit)) return false;
+            if (minProfitPct && opp.profit_percentage < parseFloat(minProfitPct)) return false;
+            return true;
+        });
+        
+        const sortedData = [...filteredData].sort((a, b) => {
+            const aVal = a[sortBy];
+            const bVal = b[sortBy];
+            return sortOrder === 'desc' ? bVal - aVal : aVal - bVal;
+        });
+        
+        const paginatedData = sortedData.slice(page * itemsPerPage, (page + 1) * itemsPerPage);
+        const totalPages = Math.ceil(sortedData.length / itemsPerPage);
+        
+        const getRowColor = (profit) => {
+            if (profit > 0) return 'hover:bg-gray-800';
+            return 'hover:bg-red-900 hover:bg-opacity-20';
+        };
+        
+        const getProfitColor = (profit) => {
+            if (profit > 0) return 'text-green-400';
+            return 'text-red-400';
+        };
+        
+        const exportToCSV = () => {
+            const headers = ['Item', 'Quality', 'Buy City', 'Sell City', 'Buy Price', 'Sell Price', 
+                            'Profit', 'Profit %', 'Source Buy', 'Source Sell', 'Age Buy (h)', 'Age Sell (h)'];
+            const rows = sortedData.map(opp => [
+                opp.item_name || opp.item_id,
+                opp.quality,
+                opp.buy_city,
+                opp.sell_city,
+                opp.buy_price,
+                opp.sell_price,
+                opp.profit_absolute,
+                opp.profit_percentage,
+                opp.source_buy,
+                opp.source_sell,
+                opp.age_buy_hours?.toFixed(1),
+                opp.age_sell_hours?.toFixed(1)
+            ]);
+            
+            const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `albion_opportunities_${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+        
+        return (
+            <div className="glass p-4 rounded-lg">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold">
+                        Market Opportunities ({opportunities.length} total, {filteredData.length} shown)
+                    </h3>
+                    <button
+                        onClick={exportToCSV}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded"
+                    >
+                        📥 Export CSV
+                    </button>
+                </div>
+                
+                {/* Filters */}
+                <div className="flex flex-wrap gap-4 mb-4 p-3 bg-gray-800 rounded">
+                    <div className="flex items-center">
+                        <input
+                            type="checkbox"
+                            id="profitableOnly"
+                            checked={showOnlyProfitable}
+                            onChange={(e) => setShowOnlyProfitable(e.target.checked)}
+                            className="mr-2"
+                        />
+                        <label htmlFor="profitableOnly" className="text-sm">
+                            Show only profitable
+                        </label>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                        <label className="text-sm text-gray-400">Min Profit:</label>
+                        <input
+                            type="number"
+                            className="bg-gray-700 rounded px-2 py-1 w-24 text-sm"
+                            placeholder="0"
+                            value={minProfit}
+                            onChange={(e) => setMinProfit(e.target.value)}
+                        />
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                        <label className="text-sm text-gray-400">Min %:</label>
+                        <input
+                            type="number"
+                            className="bg-gray-700 rounded px-2 py-1 w-20 text-sm"
+                            placeholder="0"
+                            value={minProfitPct}
+                            onChange={(e) => setMinProfitPct(e.target.value)}
+                        />
+                    </div>
+                    
+                    <div className="text-sm text-gray-400">
+                        Profitable: <span className="text-green-400 font-bold">
+                            {opportunities.filter(o => o.profit_absolute > 0).length}
+                        </span> | 
+                        Negative: <span className="text-red-400 font-bold ml-1">
+                            {opportunities.filter(o => o.profit_absolute <= 0).length}
+                        </span>
+                    </div>
+                </div>
+                
+                {filteredData.length === 0 ? (
+                    <div className="text-center py-8 text-gray-400">
+                        No opportunities match your filters. Try adjusting them.
+                    </div>
+                ) : (
+                    <>
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="border-b border-gray-700">
+                                        <th className="text-left p-2">Item</th>
+                                        <th className="text-left p-2">Buy</th>
+                                        <th className="text-left p-2">Sell</th>
+                                        <th className="text-right p-2">Buy Price</th>
+                                        <th className="text-right p-2">Sell Price</th>
+                                        <th className="text-right p-2 cursor-pointer hover:text-purple-400"
+                                            onClick={() => {
+                                                if (sortBy === 'profit_absolute') {
+                                                    setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
+                                                } else {
+                                                    setSortBy('profit_absolute');
+                                                    setSortOrder('desc');
+                                                }
+                                            }}>
+                                            Profit {sortBy === 'profit_absolute' && (sortOrder === 'desc' ? '↓' : '↑')}
+                                        </th>
+                                        <th className="text-right p-2 cursor-pointer hover:text-purple-400"
+                                            onClick={() => {
+                                                if (sortBy === 'profit_percentage') {
+                                                    setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
+                                                } else {
+                                                    setSortBy('profit_percentage');
+                                                    setSortOrder('desc');
+                                                }
+                                            }}>
+                                            % {sortBy === 'profit_percentage' && (sortOrder === 'desc' ? '↓' : '↑')}
+                                        </th>
+                                        <th className="text-center p-2">Source</th>
+                                        <th className="text-center p-2">Age</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {paginatedData.map((opp, idx) => (
+                                        <tr 
+                                            key={idx}
+                                            className={`border-b border-gray-800 cursor-pointer transition-all ${getRowColor(opp.profit_absolute)}`}
+                                            onClick={() => onRowClick(opp)}
+                                        >
+                                            <td className="p-2">
+                                                <div>
+                                                    <div className="font-medium">{opp.item_name || opp.item_id}</div>
+                                                    <div className="text-xs text-gray-400">Q{opp.quality}</div>
+                                                </div>
+                                            </td>
+                                            <td className="p-2">{opp.buy_city}</td>
+                                            <td className="p-2">
+                                                {opp.sell_city}
+                                                {opp.is_caerleon_route && (
+                                                    <span className="ml-2 text-xs px-2 py-1 rounded caerleon-badge text-black">⭐</span>
+                                                )}
+                                            </td>
+                                            <td className="text-right p-2">{opp.buy_price.toLocaleString()}</td>
+                                            <td className="text-right p-2">{opp.sell_price.toLocaleString()}</td>
+                                            <td className={`text-right p-2 font-bold ${getProfitColor(opp.profit_absolute)}`}>
+                                                {opp.profit_absolute.toLocaleString()}
+                                            </td>
+                                            <td className={`text-right p-2 font-bold ${getProfitColor(opp.profit_percentage)}`}>
+                                                {opp.profit_percentage.toFixed(1)}%
+                                            </td>
+                                            <td className="text-center p-2">
+                                                <div className="flex justify-center gap-1">
+                                                    <span className={`text-xs px-1 py-0.5 rounded ${
+                                                        opp.source_buy === 'PRIVATE' ? 'bg-green-700' : 'bg-blue-700'
+                                                    }`}>
+                                                        {opp.source_buy?.[0] || 'A'}
+                                                    </span>
+                                                    <span className={`text-xs px-1 py-0.5 rounded ${
+                                                        opp.source_sell === 'PRIVATE' ? 'bg-green-700' : 'bg-blue-700'
+                                                    }`}>
+                                                        {opp.source_sell?.[0] || 'A'}
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            <td className="text-center p-2 text-xs text-gray-400">
+                                                {Math.max(opp.age_buy_hours || 0, opp.age_sell_hours || 0).toFixed(1)}h
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        {totalPages > 1 && (
+                            <div className="flex justify-center gap-2 mt-4">
+                                <button
+                                    onClick={() => setPage(Math.max(0, page - 1))}
+                                    disabled={page === 0}
+                                    className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
+                                >
+                                    Previous
+                                </button>
+                                <span className="px-3 py-1">
+                                    Page {page + 1} of {totalPages}
+                                </span>
+                                <button
+                                    onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+                                    disabled={page === totalPages - 1}
+                                    className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        );
+    }
+        // ================ MAIN APP COMPONENT =================
+        function App() {
+            const [activeTab, setActiveTab] = useState('market');
+            const [meta, setMeta] = useState({ cities: [], items: {}, items_by_category: null, regions: [] });
+            const [settings, setSettings] = useLocalStorage('settings', {
+                region: 'west',
+                premium: false,
+                setupFee: 0.025,
+                maxAge: 12,
+                preferCaerleon: false
+            });
+            const [selectedCities, setSelectedCities] = useLocalStorage('selectedCities', []);
+            const [selectedItems, setSelectedItems] = useLocalStorage('selectedItems', []);
+            const [opportunities, setOpportunities] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState(null);
+            const [selectedOpportunity, setSelectedOpportunity] = useState(null);
+
+            useEffect(() => {
+                loadMeta();
+            }, []);
+
+            const loadMeta = async () => {
+                try {
+                    setError(null);
+                    const data = await api.getMeta();
+                    setMeta(data);
+                    
+                    // Set default selections if empty
+                    if (selectedCities.length === 0 && data.cities.length > 0) {
+                        setSelectedCities(data.cities.slice(0, 3));
+                    }
+                    if (selectedItems.length === 0 && Object.keys(data.items).length > 0) {
+                        setSelectedItems(Object.keys(data.items).slice(0, 5));
+                    }
+                } catch (error) {
+                    console.error('Failed to load meta data:', error);
+                    setError('Failed to connect to backend. Make sure the server is running on port 8000.');
+                }
+            };
+
+            const handleCheck = async () => {
+                if (selectedItems.length === 0 || selectedCities.length === 0) {
+                    alert('Please select at least one item and one city');
+                    return;
+                }
+
+                setLoading(true);
+                setError(null);
+                try {
+                    const data = await api.getPrices({
+                        region: settings.region,
+                        items: selectedItems,
+                        cities: selectedCities,
+                        qualities: [0, 1, 2],
+                        max_age_hours: settings.maxAge
+                    });
+                    alert(`✅ Found ${data.prices.length} fresh price entries`);
+                } catch (error) {
+                    setError('Failed to check prices: ' + error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleCalculate = async () => {
+                if (selectedItems.length === 0 || selectedCities.length < 2) {
+                    alert('Please select at least one item and two cities for trade routes');
+                    return;
+                }
+
+                setLoading(true);
+                setError(null);
+                setOpportunities([]);
+                
+                try {
+                    const data = await api.getOpportunities({
+                        region: settings.region,
+                        items: selectedItems,
+                        cities: selectedCities,
+                        qualities: [0],
+                        premium: settings.premium,
+                        setup_fee: settings.setupFee,
+                        max_age_hours: settings.maxAge,
+                        transport_cost: 0,
+                        prefer_caerleon: settings.preferCaerleon
+                    });
+                    
+                    setOpportunities(data.opportunities || []);
+                    
+                    if (!data.opportunities || data.opportunities.length === 0) {
+                        alert('No profitable opportunities found. Try selecting more items/cities or adjusting the max age filter.');
+                    }
+                } catch (error) {
+                    setError('Failed to calculate opportunities: ' + error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleRefresh = () => {
+                loadMeta();
+                setOpportunities([]);
+            };
+
+    return (
+        <div className="min-h-screen bg-albion-dark p-4">
+            <div className="max-w-7xl mx-auto">
+                {/* Header */}
+                <div className="text-center mb-6">
+                    <h1 className="text-4xl md:text-5xl font-bold mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+                        Albion Market Helper
+                    </h1>
+                    <p className="text-gray-400">Find profitable trade routes & breeding opportunities</p>
+                </div>
+                
+                {/* Tab Navigation */}
+                <div className="flex gap-2 mb-6">
+                    <button
+                        onClick={() => setActiveTab('market')}
+                        className={`px-6 py-3 rounded-lg font-bold transition-all ${
+                            activeTab === 'market' ? 'tab-active' : 'tab-inactive hover:bg-gray-700'
+                        }`}
+                    >
+                        💰 Market Trading
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('breeding')}
+                        className={`px-6 py-3 rounded-lg font-bold transition-all ${
+                            activeTab === 'breeding' ? 'tab-active' : 'tab-inactive hover:bg-gray-700'
+                        }`}
+                    >
+                        🐄 Breeding Calculator
+                    </button>
+                </div>
+                
+                {/* Tab Content */}
+                {activeTab === 'market' ? (
+                    <div>
+                        {/* Your existing market content */}
+                        {error && (
+                            <div className="bg-red-900 bg-opacity-50 border border-red-500 text-red-200 p-4 rounded-lg mb-4">
+                                <strong>Error:</strong> {error}
+                            </div>
+                        )}
+                        
+                        <TopBar settings={settings} onSettingsChange={setSettings} />
+                        
+                        <CitiesSelector
+                            cities={meta.cities}
+                            selectedCities={selectedCities}
+                            onChange={setSelectedCities}
+                        />
+                        
+                        <ItemsPicker
+                            items={meta.items}
+                            itemsByCategory={meta.items_by_category}
+                            selectedItems={selectedItems}
+                            onChange={setSelectedItems}
+                        />
+                        
+                        <div className="glass p-4 rounded-lg mb-4">
+                            <div className="flex flex-wrap gap-4">
+                                <button
+                                    onClick={handleCheck}
+                                    disabled={loading}
+                                    className="px-6 py-3 btn-primary rounded-lg text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    🔍 CHECK PRICES
+                                </button>
+                                <button
+                                    onClick={handleCalculate}
+                                    disabled={loading}
+                                    className="px-6 py-3 btn-action rounded-lg text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    💰 CALCULATE
+                                </button>
+                                <button
+                                    onClick={() => setOpportunities([])}
+                                    disabled={loading}
+                                    className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-white font-bold disabled:opacity-50"
+                                >
+                                    🗑️ CLEAR
+                                </button>
+                                <button
+                                    onClick={handleRefresh}
+                                    disabled={loading}
+                                    className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-white font-bold disabled:opacity-50"
+                                >
+                                    🔄 REFRESH
+                                </button>
+                            </div>
+                        </div>
+                        
+                        {loading && (
+                            <div className="text-center py-8">
+                                <div className="loading text-2xl">
+                                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                                    <div className="mt-2">Calculating opportunities...</div>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {!loading && opportunities.length > 0 && (
+                            <ResultsTable
+                                opportunities={opportunities}
+                                onRowClick={setSelectedOpportunity}
+                            />
+                        )}
+                        
+                        {selectedOpportunity && (
+                            <DetailsDrawer
+                                opportunity={selectedOpportunity}
+                                onClose={() => setSelectedOpportunity(null)}
+                            />
+                        )}
+                    </div>
+                ) : (
+                    <BreedingTab />
+                )}
+                
+                {/* Footer */}
+                <div className="text-center mt-8 text-gray-500 text-sm">
+                    <p>Data provided by Albion Online Data Project</p>
+                    <p>Not affiliated with Sandbox Interactive GmbH</p>
+                </div>
+            </div>
+        </div>
+    );
+}
+        // ================ RENDER APP =================
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
